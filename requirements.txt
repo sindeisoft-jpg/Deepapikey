@@ -1,0 +1,4 @@
+PyQt6>=6.10.0
+PyQt6-WebEngine>=6.10.0
+pynput>=1.7.0
+flask>=2.0.0python-docx
