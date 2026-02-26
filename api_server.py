@@ -74,160 +74,167 @@ def create_app(request_queue: Queue, response_dict: dict) -> "Flask":
             ],
         })
 
-    # 默认 system：让网页端 DeepSeek 输出与官方 API 一致，且代码格式可被 Cline/ALINE 等正确解析
+    # 专门为Cline/Aline智能体优化的系统提示词
     DEFAULT_SYSTEM = (
-        "你正在模拟 DeepSeek 官方 API 的助手回复，输出会直接作为 choices[0].message.content，供 Cline 等智能体解析。\n"
-        "【必须】\n"
-        "- 只输出助手应返回的纯文本内容，一次输出完整，不要分多段试探。\n"
-        "- 代码必须使用 markdown 围栏代码块：先写 ```语言（如 python、bash），换行后写代码，最后换行写 ```。禁止单独一行只写「python」或「bash」再直接写代码。\n"
-        "- 多文件时格式固定为：**文件名** 或 文件名: 换行后紧跟 ```语言 换行 代码 换行 ```。例如：**server.py**\\n```python\\nimport socket\\n...\\n```\\n**client.py**\\n```python\\n...\\n```。\n"
-        "- 使用说明中的命令用 ```bash 代码块；简要说明可放在代码块之前或之后，保持结构清晰。\n"
-        "【禁止】\n"
-        "- 不要输出 [约束]、[问题]、[系统指令]、[用户输入] 等标签。\n"
-        "- 不要以「根据您的要求」「好的，我来」「以下是」「下面是」等开场白开头。\n"
-        "- 不要以「希望可以帮到你」「如有疑问欢迎继续问」等结尾语收尾。\n"
-        "- 不要输出 JSON 外壳（如 {\"content\": \"...\"}），只输出 content 内的等价内容。\n"
-        "- 不要用「服务器端代码 (server.py)」后跟单独一行「python」再写代码；必须用 **server.py** 或 server.py: 后直接接 ```python 代码块。\n"
-        "- 禁止输出任何工具调用格式：不要输出 ask_followup_question、access_mcp_resource、tool_calls 等；不要输出「Aline 有一个问题」「Your question here」或类似占位符。只输出最终答案或代码，不要反问或请求澄清。"
+        "你是一个专业的代码助手，正在与Cline/Aline智能体协作完成编程任务。请严格按照以下格式输出：\n"
+        "\n"
+        "【文件创建格式 - 重要】\n"
+        "当需要创建文件时，必须使用以下精确格式：\n"
+        "<create_file>\n"
+        "<file_path>文件路径</file_path>\n"
+        "<file_content>\n"
+        "文件内容\n"
+        "</file_content>\n"
+        "</create_file>\n"
+        "\n"
+        "【代码块格式】\n"
+        "- Python代码：```python\n代码内容\n```\n"
+        "- JavaScript代码：```javascript\n代码内容\n```\n"
+        "- 其他语言类似\n"
+        "\n"
+        "【多文件项目格式】\n"
+        "对于多文件项目，请分别列出每个文件：\n"
+        "1. 主文件：\n"
+        "<create_file>\n"
+        "<file_path>main.py</file_path>\n"
+        "<file_content>\n"
+        "#!/usr/bin/env python3\n"
+        "# -*- coding: utf-8 -*-\n"
+        "\n"
+        "代码内容\n"
+        "\n"
+        "if __name__ == '__main__':\n"
+        "    # 主程序入口\n"
+        "    pass\n"
+        "</file_content>\n"
+        "</create_file>\n"
+        "\n"
+        "2. 配置文件：\n"
+        "<create_file>\n"
+        "<file_path>requirements.txt</file_path>\n"
+        "<file_content>\n"
+        "依赖包列表\n"
+        "</file_content>\n"
+        "</create_file>\n"
+        "\n"
+        "【输出要求】\n"
+        "- 直接输出最终答案，无需解释过程\n"
+        "- 代码必须完整可执行，包含必要导入和错误处理\n"
+        "- 使用UTF-8编码和适当的Shebang行\n"
+        "- 遵循PEP 8或其他相应语言的最佳实践\n"
+        "- 不要输出占位符或伪代码\n"
+        "\n"
+        "【特别注意】\n"
+        "- 严格使用<create_file>标签格式创建文件\n"
+        "- 文件路径使用相对路径，如src/main.py\n"
+        "- 确保文件内容完整且语法正确\n"
+        "- 不要在代码中包含创建文件的指令，只需输出文件内容\n"
+        "- 对于简单任务可以直接输出代码块\n"
+        "- 对于复杂项目使用多个<create_file>标签\n"
     )
 
     def _normalize_content(raw: str, want_json_only: bool = False) -> str:
-        """去掉常见开场白、多余标签、结尾语；合并多余空行；若需要则只保留第一个合法 JSON。"""
+        """优化的内容规范化处理 - 保留更多有用信息，确保与Claude等智能体兼容"""
         if not raw or not isinstance(raw, str):
             return raw or ""
+        
         s = raw.strip()
-        # 去掉可能混入的标签或 UI 文案
-        for line in ("[系统指令]", "[用户输入]", "[约束]", "[问题]", "系统指令", "用户输入", "复制", "深度思考", "联网搜索", "互联网搜索", "下载"):
-            s = s.replace(line, "").strip()
-        # 若整段是 Aline 占位符（ask_followup_question / Your question here），清空以免触发客户端工具调用
-        if re.search(r"ask_followup_question|Aline\s*有一个问题|Your\s*question\s*here", s, re.IGNORECASE) and not re.search(r"```[\s\S]*```", s):
+        
+        # 保留Cline/Aline的关键格式标签
+        if "<create_file>" in s or "<file_path>" in s or "<file_content>" in s:
+            # 这是文件创建格式，要特别小心处理
+            return s  # 直接返回，不做过多清理
+        
+        # 移除系统指令和UI标签
+        ui_tags = ["[系统指令]", "[用户输入]", "[约束]", "[问题]", "系统指令", "用户输入"]
+        for tag in ui_tags:
+            s = s.replace(tag, "").strip()
+        
+        # 移除Cline相关的配置信息（仅当不是代码块时）
+        if "You are Cline" in s and "GLOBAL RULES" in s and "```" not in s:
+            # 这是Cline的系统配置，应该移除
+            lines = s.split("\n")
+            filtered_lines = []
+            skip_cline_config = False
+            
+            for line in lines:
+                if "You are Cline" in line:
+                    skip_cline_config = True
+                    continue
+                elif skip_cline_config and (line.startswith("##") or "MODES" in line or "EXECUTION FLOW" in line):
+                    # 跳过Cline配置部分
+                    if "<task>" in line:
+                        skip_cline_config = False  # 任务开始，停止跳过
+                        filtered_lines.append(line)
+                    continue
+                elif "<task>" in line:
+                    skip_cline_config = False
+                    filtered_lines.append(line)
+                elif not skip_cline_config:
+                    filtered_lines.append(line)
+            
+            s = "\n".join(filtered_lines).strip()
+        
+        # 保留有价值的分析内容，移除纯占位符
+        if re.search(r"^(Aline\s*有一个问题|Your\s*question\s*here)[:\s]*$", s.strip(), re.IGNORECASE):
             s = ""
-        # 去掉仅由这些词组成的行
+        
+        # 移除明显无意义的单行内容
+        meaningless_lines = ["复制", "联网搜索", "互联网搜索", "下载"]
         lines = s.split("\n")
-        lines = [ln for ln in lines if ln.strip() not in ("复制", "深度思考", "联网搜索", "互联网搜索", "下载", "Your question here", "Aline 有一个问题：")]
-        s = "\n".join(lines).strip()
-        # 去掉以「Aline 有一个问题：」或「Your question here」开头的整段（避免被解析为工具调用）
-        for prefix in ("Aline 有一个问题：", "Aline 有一个问题:", "Your question here"):
-            if s.strip().startswith(prefix) and len(s.strip()) < 200:
-                s = ""
-                break
-        # 若包含「已思考」段落：去掉该段，只保留示例/代码部分，便于 ALINE 等智能体直接解析并生成文件
-        if "已思考" in s:
-            out_lines = []
-            skip = True
-            for ln in s.split("\n"):
-                line = ln.strip()
-                if skip:
-                    if "已思考" in line:
-                        continue
-                    if "第一次调用" in line or "第二次调用" in line or ("标记" in line and "完成" in line):
-                        continue
-                    if "代码内容要" in line or "我们使用" in line and "标准库" in line:
-                        continue
-                    if "示例代码" in line or line in ("代码:", "示例代码:") or (line.startswith("```") or re.match(r"^[\w\.\-]+\.(py|js|ts|json|md|cpp|java)\s*:?\s*$", line)):
-                        skip = False
-                out_lines.append(ln)
-            s = "\n".join(out_lines).strip()
-        # 合并多余空行（连续多个换行压成最多两个），并统一修剪每行首尾空白
-        s = re.sub(r"\n{3,}", "\n\n", s)
-        lines = [ln.strip() for ln in s.split("\n")]
-        s = "\n".join(lines).strip()
-        # 将网页常见「文件名)\npython\n代码」转为 Cline 可解析的「**文件名**\n```python\n代码\n```」
+        filtered_lines = []
+        for line in lines:
+            stripped = line.strip()
+            if stripped not in meaningless_lines:
+                filtered_lines.append(line)
+        s = "\n".join(filtered_lines).strip()
+        
+        # 优化代码块格式转换
+        # 将常见的代码格式转换为标准markdown格式
         s = re.sub(
-            r"([^\n]*?)\s*\(([a-zA-Z0-9_]+\.(?:py|js|ts|sh))\)\s*\n\s*python\s*\n",
-            r"**\2**\n```python\n",
+            r"^([a-zA-Z0-9_\.\-]+\.(?:py|js|ts|java|cpp|go|rs))\s*[)：:]?\s*\n\s*(python|javascript|java|cpp|go|rust)\s*\n",
+            r"**\1**\n```\2\n",
             s,
-            flags=re.IGNORECASE,
+            flags=re.MULTILINE | re.IGNORECASE,
         )
-        s = re.sub(
-            r"([^\n]*?)\s*\(([a-zA-Z0-9_]+\.(?:sh|bash))\)\s*\n\s*bash\s*\n",
-            r"**\2**\n```bash\n",
-            s,
-            flags=re.IGNORECASE,
-        )
-        s = re.sub(r"(?<=\n)(python|bash)\s*\n(?=(?:import |def |class |#))", r"```\1\n", s, flags=re.IGNORECASE)
-        # 为未闭合的 ``` 补闭合：若 ``` 个数为奇，在最后一个 ```语言 代码块后补 \n```
-        if s.count("```") % 2 == 1:
-            for lang in ("python", "bash"):
-                fence = "```" + lang
-                idx = s.rfind(fence)
-                if idx >= 0:
-                    start = idx + len(fence)
-                    rest = s[start:]
-                    end = rest.find("\n\n**") if "\n\n**" in rest else rest.find("\n\n```")
-                    if end >= 0:
-                        s = s[: start + end] + "\n```" + s[start + end :]
-                    else:
-                        s = s + "\n```"
-                    break
-        # 去掉常见开场白（行首整句），与 DeepSeek 官方 API 的“直接内容”风格一致
-        preamble_patterns = [
-            r"^根据[您你]的?要求[，,]?\s*",
-            r"^根据[您你]的?问题[，,]?\s*",
+        
+        # 补全未闭合的代码块
+        code_blocks = re.findall(r"```\w*", s)
+        if len(code_blocks) % 2 == 1:
+            s = s.rstrip() + "\n```"
+        
+        # 适度清理开头的冗余表述，但保留有价值的信息
+        # 只移除非常明确的模板化开场白
+        redundant_openings = [
             r"^好的[，,]?\s*",
-            r"^以下是?[：:]\s*",
-            r"^下面是?[：:]\s*",
-            r"^我来[为给]?你?\s*",
             r"^收到[，,]?\s*",
             r"^明白[了]?[，,]?\s*",
-            r"^我的?回答[是：:]?\s*",
-            r"^下面是我的?回答[：:]?\s*",
-            r"^我理解了[，,]?\s*",
         ]
-        for p in preamble_patterns:
-            s = re.sub(p, "", s, flags=re.IGNORECASE).strip()
-        # 去掉开头多行纯开场白（逐行）
-        preamble_lines = (
-            "根据您的要求", "根据你的要求", "根据您的问题", "好的，", "以下是", "下面是",
-            "我来为你", "收到，", "明白。", "我的回答是", "下面是我的回答", "我理解了",
-        )
-        while True:
-            first_line = (s.split("\n")[0] or "").strip()
-            if not first_line:
-                break
-            dropped = False
-            for pl in preamble_lines:
-                if first_line.startswith(pl) and len(first_line) < 80:
-                    lines = s.split("\n", 1)
-                    s = (lines[1] if len(lines) > 1 else "").strip()
-                    dropped = True
-                    break
-            if not dropped:
-                break
-        # 去掉常见结尾语（整行或段尾），使输出更接近 API 风格
-        ending_lines = (
-            "希望可以帮到你。", "希望可以帮到你", "如有疑问欢迎继续提问。", "如有疑问欢迎继续问。",
-            "如有其他问题欢迎继续提问。", "如果还有问题可以继续问我。", "以上仅供参考。",
-        )
+        
+        for pattern in redundant_openings:
+            s = re.sub(pattern, "", s, flags=re.IGNORECASE).strip()
+        
+        # 保留有价值的分析性内容
+        # 不要过度清理"根据您的要求"这类有价值的上下文信息
+        
+        # 适度清理结尾，但保留建设性内容
+        constructive_endings = [
+            "希望可以帮到你。", "希望可以帮到你", 
+            "如有疑问欢迎继续提问。", "如有疑问欢迎继续问。"
+        ]
+        
         lines = s.split("\n")
-        while lines:
-            last = (lines[-1] or "").strip()
-            if not last:
-                lines.pop()
-                continue
-            if any(last == e or last.startswith(e) for e in ending_lines) and len(last) < 60:
-                lines.pop()
-                s = "\n".join(lines).strip()
-                continue
-            break
+        if lines and lines[-1].strip() in constructive_endings:
+            lines.pop()
+            s = "\n".join(lines).strip()
+        
+        # 标准化空白字符
+        s = re.sub(r"\n{3,}", "\n\n", s)
+        lines = [line.rstrip() for line in s.split("\n")]
         s = "\n".join(lines).strip()
-        # 若含 <write_to_file><path>...</path><content>...</content>，追加 Markdown 代码块便于 Aline 创建文件
-        _ext_to_lang = {"java": "java", "py": "python", "js": "javascript", "ts": "typescript", "sh": "bash"}
-        for write_match in re.finditer(
-            r"<write_to_file>\s*<path>([^<]+)</path>\s*<content>([\s\S]*?)</content>",
-            s,
-            re.IGNORECASE,
-        ):
-            path = write_match.group(1).strip()
-            code = write_match.group(2).strip()
-            ext = path.split(".")[-1].lower() if "." in path else ""
-            lang = _ext_to_lang.get(ext, ext or "text")
-            md_block = f"\n\n**{path}**\n```{lang}\n{code}\n```"
-            if f"**{path}**" not in s and md_block.strip() not in s:
-                s = s + md_block
-        # 若要求仅 JSON，尝试提取第一个 JSON 对象
+        
+        # JSON提取逻辑保持不变
         if want_json_only:
-            # 先尝试 ```json ... ``` 或 ``` ... ```
             for pattern in (r"```(?:json)?\s*([\s\S]*?)\s*```", r"```\s*([\s\S]*?)\s*```"):
                 m = re.search(pattern, s)
                 if m:
@@ -251,7 +258,8 @@ def create_app(request_queue: Queue, response_dict: dict) -> "Flask":
                             except Exception:
                                 pass
                             break
-        return s.strip()
+        
+        return s
 
     def _run_chat(body):
         """解析 messages（含 system），可选 tools，投递队列，等待回复；返回 (content, model)。"""
@@ -325,7 +333,7 @@ def create_app(request_queue: Queue, response_dict: dict) -> "Flask":
         request_id = str(uuid.uuid4())
         event = threading.Event()
         request_queue.put((request_id, payload.strip(), event))
-        ok = event.wait(timeout=120)
+        ok = event.wait(timeout=180)  # 增加超时时间从120秒到180秒
         content = response_dict.pop(request_id, "")
         if not ok:
             content = content or "Request timeout (no reply within 120s)."

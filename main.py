@@ -20,7 +20,7 @@ except ImportError:
     _HAS_API_SERVER = False
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QTextEdit, QPushButton, QLabel, QSplitter, QMessageBox
+    QTextEdit, QPushButton, QLabel, QSplitter, QMessageBox, QComboBox
 )
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebEngineCore import QWebEnginePage, QWebEngineSettings
@@ -62,11 +62,9 @@ class DeepSeekBrowser(QMainWindow):
         # 创建分割器，左侧是浏览器，右侧是对话界面
         splitter = QSplitter(Qt.Orientation.Horizontal)
         
-        # 左侧：Web浏览器
-        self.browser = QWebEngineView()
-        self.browser.settings().setAttribute(QWebEngineSettings.WebAttribute.JavascriptEnabled, True)
-        self.browser.setUrl(QUrl("https://chat.deepseek.com"))
-        splitter.addWidget(self.browser)
+        # 左侧：Web浏览器面板
+        browser_panel = self.create_browser_panel()
+        splitter.addWidget(browser_panel)
         
         # 右侧：对话面板
         chat_panel = QWidget()
@@ -154,6 +152,25 @@ class DeepSeekBrowser(QMainWindow):
             }
         """)
         
+        self.export_button = QPushButton("📄 导出Word")
+        self.export_button.setStyleSheet("""
+            QPushButton {
+                background-color: #FF9800;
+                color: white;
+                border: none;
+                padding: 8px 15px;
+                font-size: 12px;
+                font-weight: bold;
+                border-radius: 4px;
+            }
+            QPushButton:hover {
+                background-color: #F57C00;
+            }
+            QPushButton:pressed {
+                background-color: #E65100;
+            }
+        """)
+        
         self.refresh_button = QPushButton("刷新页面")
         self.refresh_button.setStyleSheet("""
             QPushButton {
@@ -170,6 +187,7 @@ class DeepSeekBrowser(QMainWindow):
         """)
         
         control_layout.addWidget(self.clear_button)
+        control_layout.addWidget(self.export_button)
         control_layout.addWidget(self.refresh_button)
         control_layout.addStretch()
         
@@ -187,15 +205,100 @@ class DeepSeekBrowser(QMainWindow):
         # 状态栏
         self.statusBar().showMessage("就绪 - 已加载DeepSeek官网")
         
+    def create_browser_panel(self):
+        """创建浏览器面板，包含URL导航功能"""
+        panel = QWidget()
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(0, 0, 0, 0)
+        
+        # 浏览器控制栏
+        control_layout = QHBoxLayout()
+        
+        self.back_button = QPushButton("←")
+        self.forward_button = QPushButton("→")
+        self.refresh_button = QPushButton("刷新")
+        self.home_button = QPushButton("首页")
+        
+        # URL地址栏
+        self.url_bar = QComboBox()
+        self.url_bar.setEditable(True)
+        self.url_bar.addItem("https://chat.deepseek.com")
+        self.url_bar.addItem("https://www.deepseek.com")
+        self.url_bar.addItem("https://www.deepseek.com/zh")
+        
+        # 设置地址栏样式
+        self.url_bar.setStyleSheet("""
+            QComboBox {
+                color: #000000;
+                background-color: #ffffff;
+                border: 1px solid #ccc;
+                border-radius: 3px;
+                padding: 5px;
+            }
+            QComboBox QAbstractItemView {
+                color: #000000;
+                background-color: #ffffff;
+            }
+        """)
+        
+        self.go_button = QPushButton("前往")
+        
+        # 设置按钮样式
+        for btn in [self.back_button, self.forward_button, self.refresh_button, 
+                   self.home_button, self.go_button]:
+            btn.setMaximumWidth(60)
+            btn.setStyleSheet("""
+                QPushButton {
+                    padding: 5px;
+                    border: 1px solid #ccc;
+                    border-radius: 3px;
+                    background-color: #f0f0f0;
+                }
+                QPushButton:hover {
+                    background-color: #e0e0e0;
+                }
+                QPushButton:pressed {
+                    background-color: #d0d0d0;
+                }
+            """)
+        
+        # 添加控件到控制栏
+        control_layout.addWidget(self.back_button)
+        control_layout.addWidget(self.forward_button)
+        control_layout.addWidget(self.refresh_button)
+        control_layout.addWidget(self.home_button)
+        control_layout.addWidget(self.url_bar)
+        control_layout.addWidget(self.go_button)
+        
+        layout.addLayout(control_layout)
+        
+        # Web浏览器视图
+        self.browser = QWebEngineView()
+        self.browser.settings().setAttribute(QWebEngineSettings.WebAttribute.JavascriptEnabled, True)
+        self.browser.setUrl(QUrl("https://chat.deepseek.com"))
+        layout.addWidget(self.browser)
+        
+        return panel
+        
     def setup_connections(self):
         """设置信号和槽的连接"""
         self.send_button.clicked.connect(self.send_message)
         self.clear_button.clicked.connect(self.clear_output)
+        self.export_button.clicked.connect(self.export_to_word)
         self.refresh_button.clicked.connect(self.refresh_browser)
+        
+        # 浏览器导航连接
+        self.back_button.clicked.connect(self.browser.back)
+        self.forward_button.clicked.connect(self.browser.forward)
+        self.refresh_button.clicked.connect(self.browser.reload)
+        self.home_button.clicked.connect(self.go_home)
+        self.go_button.clicked.connect(self.navigate_to_url)
+        self.url_bar.lineEdit().returnPressed.connect(self.navigate_to_url)
         
         # 浏览器加载状态变化
         self.browser.loadStarted.connect(self.on_load_started)
         self.browser.loadFinished.connect(self.on_load_finished)
+        self.browser.urlChanged.connect(self.on_url_changed)
         
     def on_load_started(self):
         """浏览器开始加载页面"""
@@ -207,6 +310,47 @@ class DeepSeekBrowser(QMainWindow):
             self.statusBar().showMessage("页面加载完成")
         else:
             self.statusBar().showMessage("页面加载失败")
+            
+    def on_url_changed(self, url):
+        """URL变化时更新地址栏"""
+        current_url = url.toString()
+        if current_url not in [self.url_bar.itemText(i) for i in range(self.url_bar.count())]:
+            self.url_bar.addItem(current_url)
+        self.url_bar.setCurrentText(current_url)
+        
+    def go_home(self):
+        """返回首页"""
+        self.browser.setUrl(QUrl("https://chat.deepseek.com"))
+        
+    def navigate_to_url(self):
+        """导航到指定URL"""
+        url_text = self.url_bar.currentText().strip()
+        if not url_text:
+            QMessageBox.warning(self, "URL为空", "请输入有效的URL地址")
+            return
+            
+        # URL格式处理
+        if not url_text.startswith(('http://', 'https://')):
+            if '.' in url_text and not url_text.startswith('www.'):
+                url_text = 'https://' + url_text
+            elif url_text.startswith('www.'):
+                url_text = 'https://' + url_text
+            else:
+                url_text = 'https://chat.deepseek.com'
+        
+        try:
+            # 验证URL格式
+            from urllib.parse import urlparse
+            parsed = urlparse(url_text)
+            if not parsed.scheme or not parsed.netloc:
+                QMessageBox.warning(self, "无效URL", "请输入有效的URL地址")
+                return
+        except Exception as e:
+            QMessageBox.warning(self, "URL错误", f"URL格式错误: {str(e)}")
+            return
+            
+        self.browser.setUrl(QUrl(url_text))
+        self.statusBar().showMessage(f"正在导航到: {url_text}")
             
     def _escape_for_js(self, text):
         """将文本转义后安全放入 JavaScript 单引号字符串中"""
@@ -420,20 +564,171 @@ class DeepSeekBrowser(QMainWindow):
                 pass
 
     def _start_reply_stream(self):
-        """开始轮询网页中的回复，以流式方式更新到右侧"""
-        self.statusBar().showMessage("正在获取网页回复…")
+        """开始轮询网页中的回复，以流式方式更新到右侧 - 优化版"""
+        self.statusBar().showMessage("正在实时获取网页回复...")
         self._stream_unchanged_count = 0
         self._stream_poll_count = 0
+        
+        # 初始化流式显示相关变量
+        self._current_displayed_text = ""  # 当前已显示的文本
+        self._last_code_block = ""         # 上次检测到的代码块
+        self._code_blocks_found = []       # 已发现的代码块列表
+        
         if self._reply_stream_timer is None:
             self._reply_stream_timer = QTimer(self)
             self._reply_stream_timer.timeout.connect(self._poll_reply)
-        self._reply_stream_timer.start(500)  # 500ms 一轮，减少 DOM 波动导致的断断续续
+        
+        # 更频繁的轮询以获得更好的实时性（200ms）
+        self._reply_stream_timer.start(200)
+        
+        # 添加实时显示指示器
+        self._add_stream_indicator()
 
-    def _stop_reply_stream(self):
-        """停止轮询"""
-        if self._reply_stream_timer is not None:
-            self._reply_stream_timer.stop()
-        self.statusBar().showMessage("回复已完整显示")
+    def _add_stream_indicator(self):
+        """添加实时流式显示指示器"""
+        # 在状态栏添加流式指示器
+        if not hasattr(self, '_stream_indicator'):
+            self._stream_indicator = QLabel("● 实时流式传输中")
+            self._stream_indicator.setStyleSheet("""
+                QLabel {
+                    color: #4CAF50;
+                    font-weight: bold;
+                    animation: blink 1s infinite;
+                }
+                @keyframes blink {
+                    0%, 50% { opacity: 1; }
+                    51%, 100% { opacity: 0.5; }
+                }
+            """)
+            self.statusBar().addPermanentWidget(self._stream_indicator)
+    
+    def _remove_stream_indicator(self):
+        """移除流式显示指示器"""
+        if hasattr(self, '_stream_indicator'):
+            self._stream_indicator.setParent(None)
+            delattr(self, '_stream_indicator')
+    
+    def _enhanced_stream_update(self, new_content):
+        """增强的流式更新逻辑，专门优化代码显示"""
+        if not new_content:
+            return
+            
+        # 检测新的代码块
+        current_code_blocks = self._extract_code_blocks(new_content)
+        
+        # 如果发现了新的代码块或代码块有更新
+        if self._detect_code_changes(current_code_blocks):
+            self._display_code_progress(current_code_blocks)
+            
+        # 检测普通文本的变化
+        if len(new_content) > len(self._current_displayed_text):
+            # 只显示新增的部分
+            new_text = new_content[len(self._current_displayed_text):]
+            if new_text.strip():
+                self._append_to_output("assistant", new_text, is_incremental=True)
+                self._current_displayed_text = new_content
+                
+        # 滚动到底部保持最新内容可见
+        self._scroll_to_latest()
+    
+    def _extract_code_blocks(self, content):
+        """提取内容中的代码块"""
+        import re
+        # 匹配代码块的正则表达式
+        code_pattern = r'```(?:\w+)?\s*\n([\s\S]*?)\n```|`([^`]+)`'
+        matches = re.findall(code_pattern, content)
+        
+        code_blocks = []
+        for match in matches:
+            if match[0]:  # 三个反引号的代码块
+                code_blocks.append(match[0].strip())
+            elif match[1]:  # 单个反引号的代码
+                code_blocks.append(match[1].strip())
+                
+        return code_blocks
+    
+    def _detect_code_changes(self, current_blocks):
+        """检测代码块是否有变化"""
+        if not current_blocks:
+            return False
+            
+        # 检查是否有新的代码块
+        if len(current_blocks) > len(self._code_blocks_found):
+            return True
+            
+        # 检查现有代码块是否有更新
+        for i, (current, previous) in enumerate(zip(current_blocks, self._code_blocks_found)):
+            if current != previous and len(current) > len(previous):
+                return True
+                
+        return False
+    
+    def _display_code_progress(self, code_blocks):
+        """显示代码编写进度"""
+        for i, code_block in enumerate(code_blocks):
+            if i >= len(self._code_blocks_found):
+                # 新的代码块
+                self._append_to_output("code_start", f"开始编写第{i+1}个代码块...")
+                self._code_blocks_found.append("")
+                
+            if code_block != self._code_blocks_found[i]:
+                # 代码块有更新
+                new_content = code_block[len(self._code_blocks_found[i]):]
+                if new_content:
+                    self._append_to_output("code_progress", new_content, is_code=True)
+                    self._code_blocks_found[i] = code_block
+                    
+                    # 更新状态栏显示进度
+                    progress = len(code_block) / max(1, len(code_block) + 50) * 100  # 估算进度
+                    self.statusBar().showMessage(f"代码编写中... ({progress:.0f}%)")
+    
+    def _append_to_output(self, role, content, is_incremental=False, is_code=False):
+        """向输出区域追加内容"""
+        cursor = self.output_text.textCursor()
+        cursor.movePosition(cursor.MoveOperation.End)
+        
+        # 设置不同的格式
+        format_obj = cursor.charFormat()
+        
+        if role == "user":
+            format_obj.setForeground(QColor("#2196F3"))
+            format_obj.setFontWeight(QFont.Weight.Bold)
+            prefix = "您: "
+        elif role == "assistant":
+            format_obj.setForeground(QColor("#4CAF50"))
+            prefix = "DeepSeek: "
+        elif role == "code_start":
+            format_obj.setForeground(QColor("#FF9800"))
+            format_obj.setFontWeight(QFont.Weight.Bold)
+            prefix = "🔧 "
+        elif role == "code_progress":
+            format_obj.setForeground(QColor("#9C27B0"))
+            format_obj.setFontFamily("Monaco")
+            format_obj.setFontPointSize(12)
+            prefix = "```\n"
+            content += "\n```\n"
+        else:
+            prefix = ""
+            
+        # 添加时间戳
+        from datetime import datetime
+        time_str = datetime.now().strftime("%H:%M:%S")
+        cursor.insertText(f"[{time_str}] ", format_obj)
+        
+        # 添加内容
+        if prefix:
+            cursor.insertText(prefix, format_obj)
+        cursor.insertText(content, format_obj)
+        cursor.insertText("\n\n", format_obj)
+        
+        # 如果是增量更新且不是代码，则添加分隔符
+        if is_incremental and not is_code:
+            cursor.insertText("─" * 30 + "\n", format_obj)
+    
+    def _scroll_to_latest(self):
+        """滚动到最新内容"""
+        scrollbar = self.output_text.verticalScrollBar()
+        scrollbar.setValue(scrollbar.maximum())
 
     def _poll_reply(self):
         """从网页抓取当前「最后一条」助手回复，避免第二次及以后取到第一条数据"""
@@ -639,21 +934,43 @@ class DeepSeekBrowser(QMainWindow):
         self._flush_api_response_if_any()
 
     def _on_final_fetch_done(self, reply_str):
-        """最终抓取回调：用此次结果写回 API 并停止轮询。"""
-        if self._api_final_fetch_safety_timer is not None:
-            self._api_final_fetch_safety_timer.stop()
-            self._api_final_fetch_safety_timer = None
-        self._stop_reply_stream()
-        final = (reply_str or "").strip() if isinstance(reply_str, str) else ""
-        if not final:
-            final = self._last_reply_text or ""
-        if self._api_request_id and self._api_response_dict is not None:
-            self._api_response_dict[self._api_request_id] = final
-            if self._api_response_event:
-                self._api_response_event.set()
-            self._api_request_id = None
-            self._api_response_event = None
-        self.statusBar().showMessage("API 请求已完成")
+        """最终抓取回调：增强错误处理和重试机制"""
+        try:
+            # 停止安全定时器
+            if self._api_final_fetch_safety_timer is not None:
+                self._api_final_fetch_safety_timer.stop()
+                self._api_final_fetch_safety_timer = None
+                
+            # 停止回复流
+            self._stop_reply_stream()
+            
+            # 处理回复内容
+            final = (reply_str or "").strip() if isinstance(reply_str, str) else ""
+            if not final:
+                final = self._last_reply_text or ""
+                
+            # 记录调试信息
+            print(f"DEBUG: API最终回复 - 长度: {len(final)}, 内容预览: {final[:100]}")
+            
+            # 确保API响应字典存在
+            if self._api_request_id and self._api_response_dict is not None:
+                self._api_response_dict[self._api_request_id] = final
+                if self._api_response_event:
+                    self._api_response_event.set()
+                    print(f"DEBUG: API事件已设置，请求ID: {self._api_request_id}")
+                self._api_request_id = None
+                self._api_response_event = None
+            else:
+                print("DEBUG: API响应状态异常")
+                # 兜底处理
+                self._flush_api_response_if_any()
+                
+            self.statusBar().showMessage("API 请求已完成")
+            
+        except Exception as e:
+            print(f"DEBUG: 回调处理异常: {e}")
+            # 兜底处理
+            self._api_safety_flush_and_clear()
 
     def set_api_queues(self, request_queue: Queue, response_dict: dict):
         """设置 API 请求队列与响应字典（由 main 在启动 API 服务后调用）。"""
@@ -693,6 +1010,71 @@ class DeepSeekBrowser(QMainWindow):
         """刷新浏览器页面"""
         self.browser.reload()
         self.statusBar().showMessage("正在刷新页面...")
+        
+    def export_to_word(self):
+        """导出对话内容为Word文档"""
+        try:
+            # 获取对话内容
+            content = self.output_text.toPlainText().strip()
+            if not content:
+                QMessageBox.information(self, "无内容", "没有对话内容可以导出")
+                return
+            
+            # 选择保存位置
+            from PyQt6.QtWidgets import QFileDialog
+            import docx
+            from datetime import datetime
+            
+            file_path, _ = QFileDialog.getSaveFileName(
+                self,
+                "导出对话为Word文档",
+                f"DeepSeek对话记录_{datetime.now().strftime('%Y%m%d_%H%M%S')}.docx",
+                "Word文档 (*.docx)"
+            )
+            
+            if not file_path:
+                return
+            
+            # 创建Word文档
+            doc = docx.Document()
+            
+            # 添加标题
+            doc.add_heading('DeepSeek 对话记录', 0)
+            
+            # 添加基本信息
+            doc.add_paragraph(f'导出时间: {datetime.now().strftime("%Y年%m月%d日 %H:%M:%S")}')
+            doc.add_paragraph('')
+            
+            # 添加对话内容
+            doc.add_heading('对话内容', level=1)
+            
+            # 解析并格式化对话内容
+            lines = content.split('\n')
+            for line in lines:
+                if line.strip():
+                    if line.startswith('您:'):
+                        # 用户消息
+                        doc.add_paragraph(line, style='Heading 2')
+                    elif 'DeepSeek:' in line:
+                        # AI回复
+                        doc.add_paragraph(line, style='Normal')
+                    else:
+                        # 其他内容
+                        doc.add_paragraph(line, style='Normal')
+                else:
+                    # 空行
+                    doc.add_paragraph('')
+            
+            # 保存文档
+            doc.save(file_path)
+            
+            QMessageBox.information(self, "导出成功", f"对话记录已成功导出至:\n{file_path}")
+            self.statusBar().showMessage("文档导出完成")
+            
+        except ImportError:
+            QMessageBox.critical(self, "缺少依赖", "请安装python-docx库: pip install python-docx")
+        except Exception as e:
+            QMessageBox.critical(self, "导出失败", f"导出过程中发生错误:\n{str(e)}")
         
     def closeEvent(self, event):
         """关闭窗口事件"""

@@ -1,0 +1,6 @@
+# 诊断命令
+echo "=== 页面功能诊断 ==="
+echo "1. 检查端口: lsof -i :8766"
+echo "2. 检查进程: ps aux | grep python"
+echo "3. 测试API: curl http://127.0.0.1:8766/api/tags"
+echo "4. 测试页面: python debug_tool.py"
